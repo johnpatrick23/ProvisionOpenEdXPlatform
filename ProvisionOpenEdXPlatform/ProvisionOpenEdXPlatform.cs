@@ -44,7 +44,10 @@ namespace ProvisionOpenEdXPlatform
                 string.IsNullOrEmpty(provisioningModel.SubscriptionId) ||
                 string.IsNullOrEmpty(provisioningModel.ClustrerName) ||
                 string.IsNullOrEmpty(provisioningModel.ResourceGroupName) ||
-                string.IsNullOrEmpty(provisioningModel.VhdURL))
+                string.IsNullOrEmpty(provisioningModel.MainVhdURL) ||
+                string.IsNullOrEmpty(provisioningModel.MysqlVhdURL) ||
+                string.IsNullOrEmpty(provisioningModel.MongoVhdURL) ||
+                string.IsNullOrEmpty(provisioningModel.ContactPerson))
             {
                 log.LogInformation($"{DateAndTime()} | Error |  Missing parameter | \n{requestBody}");
                 return new BadRequestObjectResult(false);
@@ -67,10 +70,14 @@ namespace ProvisionOpenEdXPlatform
 
                     string resourceGroupName = provisioningModel.ResourceGroupName;
                     string clusterName = provisioningModel.ClustrerName;
-                    string vhdURL = provisioningModel.VhdURL;
+                    string MainVhdURL = provisioningModel.MainVhdURL;
+                    string MysqlVhdURL = provisioningModel.MysqlVhdURL;
+                    string MongoVhdURL = provisioningModel.MongoVhdURL;
                     string subnet = "default";
                     string username = provisioningModel.Username;
                     string password = provisioningModel.Password;
+
+                    string contactPerson = provisioningModel.ContactPerson;
 
                     IResourceGroup resourceGroup = _azureProd.ResourceGroups.GetByName(resourceGroupName);
                     Region region = resourceGroup.Region;
@@ -85,8 +92,8 @@ namespace ProvisionOpenEdXPlatform
                         .DefineSubnet(subnet)
                             .WithAddressPrefix("10.0.0.0/24")
                             .Attach()
+                        .WithTag("_contact_person",contactPerson)
                         .Create();
-                    //_azureProd.Networks.GetByResourceGroup(resourceGroupName, $"{clusterName}-vnet");
                     
                     #endregion
 
@@ -98,6 +105,7 @@ namespace ProvisionOpenEdXPlatform
                        .WithExistingResourceGroup(resourceGroupName)
                        .WithDynamicIP()
                        .WithLeafDomainLabel(clusterName)
+                       .WithTag("_contact_person", contactPerson)
                        .Create();
                     #endregion
 
@@ -137,6 +145,88 @@ namespace ProvisionOpenEdXPlatform
                             .WithPriority(102)
                             .WithDescription("CMS")
                             .Attach()
+                        .DefineRule("CMSSSLPort")
+                            .AllowInbound()
+                            .FromAnyAddress()
+                            .FromAnyPort()
+                            .ToAnyAddress()
+                            .ToPort(48010)
+                            .WithProtocol(SecurityRuleProtocol.Tcp)
+                            .WithPriority(112)
+                            .WithDescription("CMSSSLPort")
+                            .Attach()
+                        .DefineRule("LMSSSLPort")
+                            .AllowInbound()
+                            .FromAnyAddress()
+                            .FromAnyPort()
+                            .ToAnyAddress()
+                            .ToPort(443)
+                            .WithProtocol(SecurityRuleProtocol.Tcp)
+                            .WithPriority(122)
+                            .WithDescription("LMSSSLPort")
+                            .Attach()
+                        .DefineRule("Certs")
+                            .AllowInbound()
+                            .FromAnyAddress()
+                            .FromAnyPort()
+                            .ToAnyAddress()
+                            .ToPort(18090)
+                            .WithProtocol(SecurityRuleProtocol.Tcp)
+                            .WithPriority(132)
+                            .WithDescription("Certs")
+                            .Attach()
+                        .DefineRule("Discovery")
+                            .AllowInbound()
+                            .FromAnyAddress()
+                            .FromAnyPort()
+                            .ToAnyAddress()
+                            .ToPort(18381)
+                            .WithProtocol(SecurityRuleProtocol.Tcp)
+                            .WithPriority(142)
+                            .WithDescription("Discovery")
+                            .Attach()
+                        .DefineRule("Ecommerce")
+                            .AllowInbound()
+                            .FromAnyAddress()
+                            .FromAnyPort()
+                            .ToAnyAddress()
+                            .ToPort(18130)
+                            .WithProtocol(SecurityRuleProtocol.Tcp)
+                            .WithPriority(152)
+                            .WithDescription("Ecommerce")
+                            .Attach()
+                        .DefineRule("edx-release")
+                            .AllowInbound()
+                            .FromAnyAddress()
+                            .FromAnyPort()
+                            .ToAnyAddress()
+                            .ToPort(8099)
+                            .WithProtocol(SecurityRuleProtocol.Tcp)
+                            .WithPriority(162)
+                            .WithDescription("edx-release")
+                            .Attach()
+                        .DefineRule("Forum")
+                            .AllowInbound()
+                            .FromAnyAddress()
+                            .FromAnyPort()
+                            .ToAnyAddress()
+                            .ToPort(18080)
+                            .WithProtocol(SecurityRuleProtocol.Tcp)
+                            .WithPriority(172)
+                            .WithDescription("Forum")
+                            .Attach()
+                        .WithTag("_contact_person", contactPerson)
+                        .DefineRule("Xqueue")
+                            .AllowInbound()
+                            .FromAnyAddress()
+                            .FromAnyPort()
+                            .ToAnyAddress()
+                            .ToPort(18040)
+                            .WithProtocol(SecurityRuleProtocol.Tcp)
+                            .WithPriority(182)
+                            .WithDescription("Xqueue")
+                            .Attach()
+                        .WithTag("_contact_person", contactPerson)
                         .Create();
                     #endregion
 
@@ -151,6 +241,7 @@ namespace ProvisionOpenEdXPlatform
                         .WithPrimaryPrivateIPAddressDynamic()
                         .WithExistingPrimaryPublicIPAddress(publicIpAddress)
                         .WithExistingNetworkSecurityGroup(networkSecurityGroup)
+                        .WithTag("_contact_person", contactPerson)
                         .Create();
                     #endregion
 
@@ -163,12 +254,13 @@ namespace ProvisionOpenEdXPlatform
                         .WithRegion(region)
                         .WithExistingResourceGroup(resourceGroupName)
                         .WithExistingPrimaryNetworkInterface(networkInterface)
-                        .WithStoredLinuxImage(vhdURL)
+                        .WithStoredLinuxImage(MainVhdURL)
                         .WithRootUsername(username)
                         .WithRootPassword(password)
                         .WithComputerName("cloudswyft")
                         .WithBootDiagnostics(storageAccount)
                         .WithSize(VirtualMachineSizeTypes.StandardD2sV3)
+                        .WithTag("_contact_person", contactPerson)
                         .Create();
                     #endregion
 
@@ -180,6 +272,7 @@ namespace ProvisionOpenEdXPlatform
                         .WithExistingResourceGroup(resourceGroupName)
                         .WithDynamicIP()
                         .WithLeafDomainLabel($"{clusterName}-lms-ip")
+                        .WithTag("_contact_person", contactPerson)
                         .Create();
                     #endregion
 
@@ -191,6 +284,7 @@ namespace ProvisionOpenEdXPlatform
                         .WithExistingResourceGroup(resourceGroupName)
                         .WithDynamicIP()
                         .WithLeafDomainLabel($"{clusterName}-cms-ip")
+                        .WithTag("_contact_person", contactPerson)
                         .Create();
                     #endregion
 
@@ -278,6 +372,7 @@ namespace ProvisionOpenEdXPlatform
                             .WithIntervalInSeconds(5)
                             .WithNumberOfProbes(6)
                             .Attach()
+                        .WithTag("_contact_person", contactPerson)
                         .Create();
                     #endregion
 
@@ -294,9 +389,10 @@ namespace ProvisionOpenEdXPlatform
                     tmCreatableLMS = tmDefinitionLMS
                         .DefineExternalTargetEndpoint($"{clusterName}-lms-tm")
                             .ToFqdn(publicIPAddressLMS.Fqdn)
-                            .FromRegion(Region.AsiaSouthEast)
+                            .FromRegion(region)
                             .WithRoutingPriority(1)
-                            .Attach();
+                            .Attach()
+                            .WithTag("_contact_person", contactPerson);
 
                     ITrafficManagerProfile trafficManagerProfileLMS = tmCreatableLMS.Create();
 
@@ -312,9 +408,10 @@ namespace ProvisionOpenEdXPlatform
                     tmCreatableCMS = tmDefinitionCMS
                         .DefineExternalTargetEndpoint($"{clusterName}-cms-tm")
                             .ToFqdn(publicIPAddressCMS.Fqdn)
-                            .FromRegion(Region.AsiaSouthEast)
+                            .FromRegion(region)
                             .WithRoutingPriority(1)
-                            .Attach();
+                            .Attach()
+                            .WithTag("_contact_person", contactPerson);
 
                     ITrafficManagerProfile trafficManagerProfileCMS = tmCreatableCMS.Create();
 
@@ -348,6 +445,7 @@ namespace ProvisionOpenEdXPlatform
                             .WithPriority(101)
                             .WithDescription("mysql")
                             .Attach()
+                        .WithTag("_contact_person", contactPerson)
                         .Create();
 
                     log.LogInformation($"{DateAndTime()} | Created | MySQL Network Security Group");
@@ -359,6 +457,7 @@ namespace ProvisionOpenEdXPlatform
                         .WithSubnet(subnet)
                         .WithPrimaryPrivateIPAddressDynamic()
                         .WithExistingNetworkSecurityGroup(networkSecurityGroupmysql)
+                        .WithTag("_contact_person", contactPerson)
                         .Create();
 
                     log.LogInformation($"{DateAndTime()} | Created | MySQL Network Interface");
@@ -367,11 +466,13 @@ namespace ProvisionOpenEdXPlatform
                         .WithRegion(region)
                         .WithExistingResourceGroup(resourceGroup)
                         .WithExistingPrimaryNetworkInterface(networkInterfacemysql)
-                        .WithStoredLinuxImage(vhdURL)
+                        .WithStoredLinuxImage(MysqlVhdURL)
                         .WithRootUsername(username)
                         .WithRootPassword(password)
                         .WithComputerName("mysql")
-                        .WithSize(VirtualMachineSizeTypes.StandardD2sV3)
+                        .WithBootDiagnostics(storageAccount)
+                        .WithSize(VirtualMachineSizeTypes.StandardD2V2)
+                        .WithTag("_contact_person", contactPerson)
                         .Create();
 
                     log.LogInformation($"{DateAndTime()} | Created | MySQL Virtual Machine");
@@ -402,6 +503,7 @@ namespace ProvisionOpenEdXPlatform
                             .WithPriority(101)
                             .WithDescription("mongodb")
                             .Attach()
+                        .WithTag("_contact_person", contactPerson)
                         .Create();
 
                     log.LogInformation($"{DateAndTime()} | Created | MongoDB Network Security Group");
@@ -413,19 +515,22 @@ namespace ProvisionOpenEdXPlatform
                         .WithSubnet(subnet)
                         .WithPrimaryPrivateIPAddressDynamic()
                         .WithExistingNetworkSecurityGroup(networkSecurityGroupmongo)
+                        .WithTag("_contact_person", contactPerson)
                         .Create();
 
-                    log.LogInformation($"{DateAndTime()} | Created | MongoDB Network Security Group");
+                    log.LogInformation($"{DateAndTime()} | Created | MongoDB Network Interface");
 
                     IVirtualMachine createVmmongo = _azureProd.VirtualMachines.Define($"{clusterName}-mongo")
                         .WithRegion(region)
                         .WithExistingResourceGroup(resourceGroup)
                         .WithExistingPrimaryNetworkInterface(networkInterfacemongo)
-                        .WithStoredLinuxImage(vhdURL)
+                        .WithStoredLinuxImage(MongoVhdURL)
                         .WithRootUsername(username)
                         .WithRootPassword(password)
                         .WithComputerName("mongo")
-                        .WithSize(VirtualMachineSizeTypes.StandardD2sV3)
+                        .WithBootDiagnostics(storageAccount)
+                        .WithSize(VirtualMachineSizeTypes.StandardD2V2)
+                        .WithTag("_contact_person", contactPerson)
                         .Create();
 
                     log.LogInformation($"{DateAndTime()} | Created | MongoDB Virtual Machine");
