@@ -15,8 +15,12 @@ namespace ProvisionOpenEdXPlatform
         public string MainVhdURL { get; set; }
         public string MysqlVhdURL { get; set; }
         public string MongoVhdURL { get; set; }
+        public string InstanceCount { get; set; }
         public string Username { get; set; }
         public string Password { get; set; }
-        public string ContactPerson { get; set; }
+        public string SmtpServer { get; set; }
+        public int SmtpPort { get; set; }
+        public string SmtpEmail { get; set; }
+        public string SmtpPassword { get; set; }
     }
 }

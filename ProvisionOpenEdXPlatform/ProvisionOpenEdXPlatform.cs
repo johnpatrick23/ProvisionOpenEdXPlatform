@@ -21,6 +21,7 @@ using Microsoft.Azure.Management.ResourceManager.Fluent.Core.ResourceActions;
 using Microsoft.Azure.Management.TrafficManager.Fluent.TrafficManagerProfile.Definition;
 using Microsoft.Azure.Management.Storage.Fluent;
 using Microsoft.Azure.Management.ResourceManager.Fluent;
+using System.Net;
 
 namespace ProvisionOpenEdXPlatform
 {
@@ -37,7 +38,8 @@ namespace ProvisionOpenEdXPlatform
             string requestBody = await new StreamReader(req.Body).ReadToEndAsync();
                 
             ProvisioningModel provisioningModel = JsonConvert.DeserializeObject<ProvisioningModel>(requestBody);
-            
+
+
             if (string.IsNullOrEmpty(provisioningModel.ClientId) ||
                 string.IsNullOrEmpty(provisioningModel.ClientSecret) ||
                 string.IsNullOrEmpty(provisioningModel.TenantId) ||
@@ -45,17 +47,71 @@ namespace ProvisionOpenEdXPlatform
                 string.IsNullOrEmpty(provisioningModel.ClustrerName) ||
                 string.IsNullOrEmpty(provisioningModel.ResourceGroupName) ||
                 string.IsNullOrEmpty(provisioningModel.MainVhdURL) ||
-                string.IsNullOrEmpty(provisioningModel.MysqlVhdURL) ||
-                string.IsNullOrEmpty(provisioningModel.MongoVhdURL) ||
-                string.IsNullOrEmpty(provisioningModel.ContactPerson))
+                string.IsNullOrEmpty(provisioningModel.SmtpServer) ||
+                string.IsNullOrEmpty(provisioningModel.SmtpPort.ToString()) ||
+                string.IsNullOrEmpty(provisioningModel.SmtpEmail) ||
+                string.IsNullOrEmpty(provisioningModel.SmtpPassword))
             {
                 log.LogInformation($"{DateAndTime()} | Error |  Missing parameter | \n{requestBody}");
                 return new BadRequestObjectResult(false);
             }
             else 
             {
+                bool isSingleInstance;
+
+                switch (provisioningModel.InstanceCount)
+                {
+                    case "1": { isSingleInstance = true; break; }
+                    case "3": { 
+                            isSingleInstance = false;
+                            if (
+                                string.IsNullOrEmpty(provisioningModel.MysqlVhdURL) ||
+                                string.IsNullOrEmpty(provisioningModel.MongoVhdURL)) 
+                            {
+                                log.LogInformation($"{DateAndTime()} | Error | Missing parameter for 3 instance (MysqlVhdURL/MongoVhdURL) | \n{requestBody}");
+                                return new BadRequestObjectResult(false);
+                            }
+                            break; 
+                        }
+                    default:
+                        {
+                            log.LogInformation($"{DateAndTime()} | Error | Please set valid instance count (1 or 3) | \n{requestBody}");
+                            return new BadRequestObjectResult(false);
+                        }
+                }
+
+                SmtpClient smtpClient = new SmtpClient()
+                {
+                    Host = provisioningModel.SmtpServer,
+                    Port = provisioningModel.SmtpPort,
+                    EnableSsl = true,
+                    UseDefaultCredentials = false,
+                    Credentials = new NetworkCredential(provisioningModel.SmtpEmail, provisioningModel.SmtpPassword)
+                };
+
+                MailMessage mailMessage = new MailMessage();
+
+                mailMessage.From = new MailAddress(provisioningModel.SmtpEmail);
+                mailMessage.To.Add(new MailAddress(provisioningModel.SmtpEmail));
+                mailMessage.Subject = "Branch Academy Installation";
+
                 try
                 {
+
+                    string resourceGroupName = provisioningModel.ResourceGroupName;
+                    string clusterName = provisioningModel.ClustrerName;
+                    string MainVhdURL = provisioningModel.MainVhdURL;
+                    string MysqlVhdURL = provisioningModel.MysqlVhdURL;
+                    string MongoVhdURL = provisioningModel.MongoVhdURL;
+                    string subnet = "default";
+                    string username = provisioningModel.Username;
+                    string password = provisioningModel.Password;
+
+                    string contactPerson = provisioningModel.SmtpEmail;
+
+                    log.LogInformation("deploying Main instance");
+                    Utils.Email(smtpClient, "Main Instance Deployed Successfully", log, mailMessage);
+
                     ServicePrincipalLoginInformation principalLogIn = new ServicePrincipalLoginInformation();
                     principalLogIn.ClientId = provisioningModel.ClientId;
                     principalLogIn.ClientSecret = provisioningModel.ClientSecret;
@@ -68,16 +124,6 @@ namespace ProvisionOpenEdXPlatform
                           .Authenticate(credentials)
                           .WithSubscription(provisioningModel.SubscriptionId);
 
-                    string resourceGroupName = provisioningModel.ResourceGroupName;
-                    string clusterName = provisioningModel.ClustrerName;
-                    string MainVhdURL = provisioningModel.MainVhdURL;
-                    string MysqlVhdURL = provisioningModel.MysqlVhdURL;
-                    string MongoVhdURL = provisioningModel.MongoVhdURL;
-                    string subnet = "default";
-                    string username = provisioningModel.Username;
-                    string password = provisioningModel.Password;
-
-                    string contactPerson = provisioningModel.ContactPerson;
 
                     IResourceGroup resourceGroup = _azureProd.ResourceGroups.GetByName(resourceGroupName);
                     Region region = resourceGroup.Region;
@@ -92,9 +138,9 @@ namespace ProvisionOpenEdXPlatform
                         .DefineSubnet(subnet)
                             .WithAddressPrefix("10.0.0.0/24")
                             .Attach()
-                        .WithTag("_contact_person",contactPerson)
+                        .WithTag("_contact_person", contactPerson)
                         .Create();
-                    
+
                     #endregion
 
                     log.LogInformation($"{DateAndTime()} | Created | VNET");
@@ -257,7 +303,7 @@ namespace ProvisionOpenEdXPlatform
                         .WithStoredLinuxImage(MainVhdURL)
                         .WithRootUsername(username)
                         .WithRootPassword(password)
-                        .WithComputerName("cloudswyft")
+                        .WithComputerName(username)
                         .WithBootDiagnostics(storageAccount)
                         .WithSize(VirtualMachineSizeTypes.StandardD2sV3)
                         .WithTag("_contact_person", contactPerson)
@@ -421,122 +467,139 @@ namespace ProvisionOpenEdXPlatform
 
                     #endregion
 
-                    #region mysql
-                    INetworkSecurityGroup networkSecurityGroupmysql = _azureProd.NetworkSecurityGroups.Define($"{clusterName}-mysql-nsg")
-                        .WithRegion(region)
-                        .WithExistingResourceGroup(resourceGroup)
-                        .DefineRule("ALLOW-SSH")
-                            .AllowInbound()
-                            .FromAnyAddress()
-                            .FromAnyPort()
-                            .ToAnyAddress()
-                            .ToPort(22)
-                            .WithProtocol(SecurityRuleProtocol.Tcp)
-                            .WithPriority(100)
-                            .WithDescription("Allow SSH")
-                            .Attach()
-                        .DefineRule("mysql")
-                            .AllowInbound()
-                            .FromAnyAddress()
-                            .FromAnyPort()
-                            .ToAnyAddress()
-                            .ToPort(3306)
-                            .WithProtocol(SecurityRuleProtocol.Tcp)
-                            .WithPriority(101)
-                            .WithDescription("mysql")
-                            .Attach()
-                        .WithTag("_contact_person", contactPerson)
-                        .Create();
+                    if (!isSingleInstance) {
 
-                    log.LogInformation($"{DateAndTime()} | Created | MySQL Network Security Group");
+                        #region mysql
+                        INetworkSecurityGroup networkSecurityGroupmysql = _azureProd.NetworkSecurityGroups.Define($"{clusterName}-mysql-nsg")
+                            .WithRegion(region)
+                            .WithExistingResourceGroup(resourceGroup)
+                            .DefineRule("ALLOW-SSH")
+                                .AllowInbound()
+                                .FromAnyAddress()
+                                .FromAnyPort()
+                                .ToAnyAddress()
+                                .ToPort(22)
+                                .WithProtocol(SecurityRuleProtocol.Tcp)
+                                .WithPriority(100)
+                                .WithDescription("Allow SSH")
+                                .Attach()
+                            .DefineRule("mysql")
+                                .AllowInbound()
+                                .FromAnyAddress()
+                                .FromAnyPort()
+                                .ToAnyAddress()
+                                .ToPort(3306)
+                                .WithProtocol(SecurityRuleProtocol.Tcp)
+                                .WithPriority(101)
+                                .WithDescription("mysql")
+                                .Attach()
+                            .WithTag("_contact_person", contactPerson)
+                            .Create();
 
-                    INetworkInterface networkInterfacemysql = _azureProd.NetworkInterfaces.Define($"{clusterName}-mysql-nic")
-                        .WithRegion(region)
-                        .WithExistingResourceGroup(resourceGroup)
-                        .WithExistingPrimaryNetwork(virtualNetwork)
-                        .WithSubnet(subnet)
-                        .WithPrimaryPrivateIPAddressDynamic()
-                        .WithExistingNetworkSecurityGroup(networkSecurityGroupmysql)
-                        .WithTag("_contact_person", contactPerson)
-                        .Create();
+                        log.LogInformation($"{DateAndTime()} | Created | MySQL Network Security Group");
 
-                    log.LogInformation($"{DateAndTime()} | Created | MySQL Network Interface");
+                        INetworkInterface networkInterfacemysql = _azureProd.NetworkInterfaces.Define($"{clusterName}-mysql-nic")
+                            .WithRegion(region)
+                            .WithExistingResourceGroup(resourceGroup)
+                            .WithExistingPrimaryNetwork(virtualNetwork)
+                            .WithSubnet(subnet)
+                            .WithPrimaryPrivateIPAddressDynamic()
+                            .WithExistingNetworkSecurityGroup(networkSecurityGroupmysql)
+                            .WithTag("_contact_person", contactPerson)
+                            .Create();
 
-                    IVirtualMachine createVmmysql = _azureProd.VirtualMachines.Define($"{clusterName}-mysql")
-                        .WithRegion(region)
-                        .WithExistingResourceGroup(resourceGroup)
-                        .WithExistingPrimaryNetworkInterface(networkInterfacemysql)
-                        .WithStoredLinuxImage(MysqlVhdURL)
-                        .WithRootUsername(username)
-                        .WithRootPassword(password)
-                        .WithComputerName("mysql")
-                        .WithBootDiagnostics(storageAccount)
-                        .WithSize(VirtualMachineSizeTypes.StandardD2V2)
-                        .WithTag("_contact_person", contactPerson)
-                        .Create();
+                        log.LogInformation($"{DateAndTime()} | Created | MySQL Network Interface");
 
-                    log.LogInformation($"{DateAndTime()} | Created | MySQL Virtual Machine");
+                        IVirtualMachine createVmmysql = _azureProd.VirtualMachines.Define($"{clusterName}-mysql")
+                            .WithRegion(region)
+                            .WithExistingResourceGroup(resourceGroup)
+                            .WithExistingPrimaryNetworkInterface(networkInterfacemysql)
+                            .WithStoredLinuxImage(MysqlVhdURL)
+                            .WithRootUsername(username)
+                            .WithRootPassword(password)
+                            .WithComputerName("mysql")
+                            .WithBootDiagnostics(storageAccount)
+                            .WithSize(VirtualMachineSizeTypes.StandardD2V2)
+                            .WithTag("_contact_person", contactPerson)
+                            .Create();
 
-                    #endregion
+                        log.LogInformation($"{DateAndTime()} | Created | MySQL Virtual Machine");
 
-                    #region mongodb
-                    INetworkSecurityGroup networkSecurityGroupmongo = _azureProd.NetworkSecurityGroups.Define($"{clusterName}-mongo-nsg")
-                        .WithRegion(region)
-                        .WithExistingResourceGroup(resourceGroup)
-                        .DefineRule("ALLOW-SSH")
-                            .AllowInbound()
-                            .FromAnyAddress()
-                            .FromAnyPort()
-                            .ToAnyAddress()
-                            .ToPort(22)
-                            .WithProtocol(SecurityRuleProtocol.Tcp)
-                            .WithPriority(100)
-                            .WithDescription("Allow SSH")
-                            .Attach()
-                        .DefineRule("mongodb")
-                            .AllowInbound()
-                            .FromAnyAddress()
-                            .FromAnyPort()
-                            .ToAnyAddress()
-                            .ToPort(27017)
-                            .WithProtocol(SecurityRuleProtocol.Tcp)
-                            .WithPriority(101)
-                            .WithDescription("mongodb")
-                            .Attach()
-                        .WithTag("_contact_person", contactPerson)
-                        .Create();
+                        #endregion
 
-                    log.LogInformation($"{DateAndTime()} | Created | MongoDB Network Security Group");
+                        #region mongodb
+                        INetworkSecurityGroup networkSecurityGroupmongo = _azureProd.NetworkSecurityGroups.Define($"{clusterName}-mongo-nsg")
+                            .WithRegion(region)
+                            .WithExistingResourceGroup(resourceGroup)
+                            .DefineRule("ALLOW-SSH")
+                                .AllowInbound()
+                                .FromAnyAddress()
+                                .FromAnyPort()
+                                .ToAnyAddress()
+                                .ToPort(22)
+                                .WithProtocol(SecurityRuleProtocol.Tcp)
+                                .WithPriority(100)
+                                .WithDescription("Allow SSH")
+                                .Attach()
+                            .DefineRule("mongodb")
+                                .AllowInbound()
+                                .FromAnyAddress()
+                                .FromAnyPort()
+                                .ToAnyAddress()
+                                .ToPort(27017)
+                                .WithProtocol(SecurityRuleProtocol.Tcp)
+                                .WithPriority(101)
+                                .WithDescription("mongodb")
+                                .Attach()
+                            .WithTag("_contact_person", contactPerson)
+                            .Create();
 
-                    INetworkInterface networkInterfacemongo = _azureProd.NetworkInterfaces.Define($"{clusterName}-mongo-nic")
-                        .WithRegion(region)
-                        .WithExistingResourceGroup(resourceGroup)
-                        .WithExistingPrimaryNetwork(virtualNetwork)
-                        .WithSubnet(subnet)
-                        .WithPrimaryPrivateIPAddressDynamic()
-                        .WithExistingNetworkSecurityGroup(networkSecurityGroupmongo)
-                        .WithTag("_contact_person", contactPerson)
-                        .Create();
+                        log.LogInformation($"{DateAndTime()} | Created | MongoDB Network Security Group");
 
-                    log.LogInformation($"{DateAndTime()} | Created | MongoDB Network Interface");
+                        INetworkInterface networkInterfacemongo = _azureProd.NetworkInterfaces.Define($"{clusterName}-mongo-nic")
+                            .WithRegion(region)
+                            .WithExistingResourceGroup(resourceGroup)
+                            .WithExistingPrimaryNetwork(virtualNetwork)
+                            .WithSubnet(subnet)
+                            .WithPrimaryPrivateIPAddressDynamic()
+                            .WithExistingNetworkSecurityGroup(networkSecurityGroupmongo)
+                            .WithTag("_contact_person", contactPerson)
+                            .Create();
 
-                    IVirtualMachine createVmmongo = _azureProd.VirtualMachines.Define($"{clusterName}-mongo")
-                        .WithRegion(region)
-                        .WithExistingResourceGroup(resourceGroup)
-                        .WithExistingPrimaryNetworkInterface(networkInterfacemongo)
-                        .WithStoredLinuxImage(MongoVhdURL)
-                        .WithRootUsername(username)
-                        .WithRootPassword(password)
-                        .WithComputerName("mongo")
-                        .WithBootDiagnostics(storageAccount)
-                        .WithSize(VirtualMachineSizeTypes.StandardD2V2)
-                        .WithTag("_contact_person", contactPerson)
-                        .Create();
+                        log.LogInformation($"{DateAndTime()} | Created | MongoDB Network Interface");
 
-                    log.LogInformation($"{DateAndTime()} | Created | MongoDB Virtual Machine");
+                        IVirtualMachine createVmmongo = _azureProd.VirtualMachines.Define($"{clusterName}-mongo")
+                            .WithRegion(region)
+                            .WithExistingResourceGroup(resourceGroup)
+                            .WithExistingPrimaryNetworkInterface(networkInterfacemongo)
+                            .WithStoredLinuxImage(MongoVhdURL)
+                            .WithRootUsername(username)
+                            .WithRootPassword(password)
+                            .WithComputerName("mongo")
+                            .WithBootDiagnostics(storageAccount)
+                            .WithSize(VirtualMachineSizeTypes.StandardD2V2)
+                            .WithTag("_contact_person", contactPerson)
+                            .Create();
 
-                    #endregion
+                        log.LogInformation($"{DateAndTime()} | Created | MongoDB Virtual Machine");
 
+                        #endregion
+
+                        log.LogInformation("deploying 3 instance");
+
+                        Utils.Email(smtpClient, "MySQL Instance Deployed Successfully", log, mailMessage);
+                    }
+
+
+                    string cmsUrl = trafficManagerProfileCMS.DnsLabel;
+                    string lmsUrl = trafficManagerProfileLMS.DnsLabel;
+
+                    Utils.Email(smtpClient, "Your Learning Platform is Ready to use." +
+                        "<br/>"
+                        + $"<a href=\"{lmsUrl}\">LMS</a>" +
+                        "<br/>" +
+                        $"<a href=\"{cmsUrl}\">CMS</a>"
+                        , log, mailMessage);
                     log.LogInformation($"Done");
                 }
                 catch (Exception e)
