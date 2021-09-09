@@ -27,6 +27,11 @@ namespace ProvisionOpenEdXPlatform
                 log.LogInformation(e.Message);
             }
         }
-       
+
+        public static string DateAndTime()
+        {
+            return $"{ DateTime.Now.ToShortDateString()} { DateTime.Now.ToShortTimeString()}";
+        }
+
     }
 }

@@ -23,11 +23,12 @@ using Microsoft.Azure.Management.Storage.Fluent;
 using Microsoft.Azure.Management.ResourceManager.Fluent;
 using System.Net;
 
+
 namespace ProvisionOpenEdXPlatform
 {
-    public static class ProvisionOpenEdXPlatform
+    public static class ProvisionOpenEdXMainOnly
     {
-        [FunctionName("ProvisionOpenEdXPlatform")]
+        [FunctionName("ProvisionOpenEdXMainOnly")]
 
         public static async Task<IActionResult> Run(
             [HttpTrigger(AuthorizationLevel.Function, "get", "post", Route = null)] HttpRequest req,
@@ -36,7 +37,7 @@ namespace ProvisionOpenEdXPlatform
             log.LogInformation($"{Utils.DateAndTime()} | C# HTTP trigger function processed a request.");
 
             string requestBody = await new StreamReader(req.Body).ReadToEndAsync();
-                
+
             ProvisioningModel provisioningModel = JsonConvert.DeserializeObject<ProvisioningModel>(requestBody);
 
 
@@ -57,7 +58,7 @@ namespace ProvisionOpenEdXPlatform
                 log.LogInformation($"{Utils.DateAndTime()} | Error |  Missing parameter | \n{requestBody}");
                 return new BadRequestObjectResult(false);
             }
-            else 
+            else
             {
                 try
                 {
@@ -94,20 +95,12 @@ namespace ProvisionOpenEdXPlatform
 
                     #region comment
 
-                    #region Create Virtual Network
-                    INetwork virtualNetwork = _azureProd.Networks.Define($"{clusterName}-vnet")
-                        .WithRegion(region)
-                        .WithExistingResourceGroup(resourceGroupName)
-                        .WithAddressSpace("10.0.0.0/16")
-                        .DefineSubnet(subnet)
-                            .WithAddressPrefix("10.0.0.0/24")
-                            .Attach()
-                        .WithTag("_contact_person", contactPerson)
-                        .Create();
+                    #region Get Virtual Network
+                    INetwork virtualNetwork = _azureProd.Networks.GetByResourceGroup($"{resourceGroup}", $"{clusterName}-vnet");
 
                     #endregion
 
-                    log.LogInformation($"{Utils.DateAndTime()} | Created | VNET");
+                    log.LogInformation($"{Utils.DateAndTime()} | Detected | VNET");
 
                     #region Create VM IP
                     IPublicIPAddress publicIpAddress = _azureProd.PublicIPAddresses.Define($"{clusterName}-vm-ip")
@@ -257,7 +250,7 @@ namespace ProvisionOpenEdXPlatform
 
                     log.LogInformation($"{Utils.DateAndTime()} | Created | Network Interface");
 
-                    IStorageAccount storageAccount = _azureProd.StorageAccounts.GetByResourceGroup(resourceGroupName, $"{clusterName}vhdsa");
+                    IStorageAccount storageAccount = _azureProd.StorageAccounts.GetByResourceGroup(resourceGroupName, $"{"qabranchacademy"}vhdsa");
 
                     #region vm
                     IVirtualMachine createVm = _azureProd.VirtualMachines.Define($"{clusterName}-jb")
@@ -582,6 +575,5 @@ namespace ProvisionOpenEdXPlatform
                 return new OkObjectResult(true);
             }
         }
-
     }
 }

@@ -15,6 +15,9 @@ using Microsoft.Azure.Management.Network.Fluent;
 using Microsoft.Azure.Management.Storage.Fluent;
 using Microsoft.Azure.Management.Compute.Fluent;
 using Microsoft.Azure.Management.Compute.Fluent.Models;
+using System.Net;
+using System.Net.Http;
+using System.Net.Http.Headers;
 
 namespace ProvisionOpenEdXPlatform
 {
@@ -68,7 +71,7 @@ namespace ProvisionOpenEdXPlatform
 
                     log.LogInformation($"{DateAndTime()} | Detected | RG");
 
-                    INetwork virtualNetwork = _azureProd.Networks.GetByResourceGroup("CS-PRD-LOP", "CS-PRD-LOP-vnet");
+                    INetwork virtualNetwork = _azureProd.Networks.GetByResourceGroup("CS-TST-PAT", "CS-TST-PAT-vnet");
 
                     log.LogInformation($"{DateAndTime()} | Detected | VNET");
 
@@ -84,6 +87,10 @@ namespace ProvisionOpenEdXPlatform
                     log.LogInformation($"{DateAndTime()} | Created | VM IP Address");
                     #endregion
 
+                    #region NSG
+                    INetworkSecurityGroup networkSecurityGroup = _azureProd.NetworkSecurityGroups.GetByResourceGroup("",$"{clusterName}-nsg");
+                    #endregion
+
                     #region nic
                     INetworkInterface networkInterface = _azureProd.NetworkInterfaces.Define($"{clusterName}")
                         .WithRegion(region)
@@ -92,13 +99,14 @@ namespace ProvisionOpenEdXPlatform
                         .WithSubnet("default")
                         .WithPrimaryPrivateIPAddressDynamic()
                         .WithExistingPrimaryPublicIPAddress(publicIpAddress)
+                        
                         .WithTag("_contact_person", contactPerson)
                         .Create();
 
                     log.LogInformation($"{DateAndTime()} | Created | Network Interface");
                     #endregion
                     
-                    IStorageAccount storageAccount = _azureProd.StorageAccounts.GetByResourceGroup("CS-VHDList", "csvmdisk");
+                    IStorageAccount storageAccount = _azureProd.StorageAccounts.GetByResourceGroup("CS-TST-PAT", "faresourcekiller");
 
                     #region vm
                     IVirtualMachine createVm = _azureProd.VirtualMachines.Define($"{clusterName}")
@@ -107,13 +115,29 @@ namespace ProvisionOpenEdXPlatform
                         .WithExistingPrimaryNetworkInterface(networkInterface)
                         .WithStoredWindowsImage(MainVhdURL)
                         .WithAdminUsername("cloudswyft")
-                        .WithAdminPassword("CloudSwyft2021!")
+                        .WithAdminPassword("pr0v3byd01n6!")
                         .WithComputerName(clusterName)
+                        //.DefineNewExtension("CreateUser").WithPublisher("").
                         .WithBootDiagnostics(storageAccount)
                         .WithSize(VirtualMachineSizeTypes.StandardB4ms)
                         .WithTag("_contact_person", contactPerson)
                         .Create();
                     #endregion
+
+                    string url = "https://18b9b200-94f8-4b85-b006-cfe4178efa7c.webhook.sea.azure-automation.net/webhooks?token=hxlFi339vmhpy0y%2fykkInD20S0a5IEy3cNFwHHHifxE%3d";
+
+                    GuestUserInfo guestUserInfo = new GuestUserInfo();
+                    guestUserInfo.ClientId = provisioningModelWindows.ClientId;
+                    guestUserInfo.ClientSecret = provisioningModelWindows.ClientSecret;
+                    guestUserInfo.TenantId = provisioningModelWindows.TenantId;
+                    guestUserInfo.SubscriptionId = provisioningModelWindows.SubscriptionId;
+                    guestUserInfo.VMName = clusterName;
+                    guestUserInfo.ResourceGroup = resourceGroupName;
+                    guestUserInfo.Username = clusterName;
+                    guestUserInfo.Password = "pr0v3byd01n6!";
+
+                    Task<string> task = CreateGuestUserAsync(url, JsonConvert.SerializeObject(guestUserInfo));
+                    task.Wait();
 
                     return new OkObjectResult(true);
                 }
@@ -123,6 +147,18 @@ namespace ProvisionOpenEdXPlatform
                     return new BadRequestObjectResult(false);
                 }
             }
+        }
+
+        public static async Task<string> CreateGuestUserAsync(string url, string data = null)
+        {
+            ServicePointManager.SecurityProtocol = SecurityProtocolType.Tls12;
+            HttpClient client = new HttpClient();
+            client.BaseAddress = new Uri(url);
+            client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+            HttpResponseMessage response = null;
+            response = await client.PostAsync(client.BaseAddress, new StringContent(data));
+
+            return await response.Content.ReadAsStringAsync();
         }
 
         private static string DateAndTime()
