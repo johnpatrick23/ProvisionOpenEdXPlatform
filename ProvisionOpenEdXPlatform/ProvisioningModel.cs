@@ -22,5 +22,6 @@ namespace ProvisionOpenEdXPlatform
         public int SmtpPort { get; set; }
         public string SmtpEmail { get; set; }
         public string SmtpPassword { get; set; }
+        public string InsightVhdURL { get; set; }
     }
 }

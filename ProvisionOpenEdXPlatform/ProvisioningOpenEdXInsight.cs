@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.IO;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Mvc;
@@ -19,9 +19,9 @@ using Microsoft.Azure.Management.Storage.Fluent;
 
 namespace ProvisionOpenEdXPlatform
 {
-    public static class ProvisioningOpenEdXMongo
+    public static class ProvisioningOpenEdXInsight
     {
-        [FunctionName("ProvisioningOpenEdXMongo")]
+        [FunctionName("ProvisioningOpenEdXInsight")]
         public static async Task<IActionResult> Run(
             [HttpTrigger(AuthorizationLevel.Function, "get", "post", Route = null)] HttpRequest req,
             ILogger log)
@@ -42,6 +42,7 @@ namespace ProvisionOpenEdXPlatform
                 string.IsNullOrEmpty(provisioningModel.MainVhdURL) ||
                 string.IsNullOrEmpty(provisioningModel.MysqlVhdURL) ||
                 string.IsNullOrEmpty(provisioningModel.MongoVhdURL) ||
+                string.IsNullOrEmpty(provisioningModel.InsightVhdURL) ||
                 string.IsNullOrEmpty(provisioningModel.SmtpServer) ||
                 string.IsNullOrEmpty(provisioningModel.SmtpPort.ToString()) ||
                 string.IsNullOrEmpty(provisioningModel.SmtpEmail) ||
@@ -60,13 +61,14 @@ namespace ProvisionOpenEdXPlatform
                     string MainVhdURL = provisioningModel.MainVhdURL;
                     string MysqlVhdURL = provisioningModel.MysqlVhdURL;
                     string MongoVhdURL = provisioningModel.MongoVhdURL;
+                    string InsightVhdURL = provisioningModel.InsightVhdURL;
                     string subnet = "default";
                     string username = provisioningModel.Username;
                     string password = provisioningModel.Password;
 
                     string contactPerson = provisioningModel.SmtpEmail;
 
-                    log.LogInformation("deploying MYSQL instance");
+                    log.LogInformation("deploying Insight instance");
                     //Utils.Email(smtpClient, "Main Instance Deployed Successfully", log, mailMessage);
 
                     ServicePrincipalLoginInformation principalLogIn = new ServicePrincipalLoginInformation();
@@ -85,7 +87,7 @@ namespace ProvisionOpenEdXPlatform
                     IResourceGroup resourceGroup = _azureProd.ResourceGroups.GetByName(resourceGroupName);
                     Region region = resourceGroup.Region;
 
-                    #region mongo
+                    #region insight
 
                     INetwork virtualNetwork = _azureProd.Networks.GetByResourceGroup(resourceGroupName, $"{clusterName}-vnet");
                     log.LogInformation($"{Utils.DateAndTime()} | Detected | Virtual Network");
@@ -93,62 +95,64 @@ namespace ProvisionOpenEdXPlatform
                     IStorageAccount storageAccount = _azureProd.StorageAccounts.GetByResourceGroup(resourceGroupName, $"{clusterName}vhdsa");
                     log.LogInformation($"{Utils.DateAndTime()} | Detected | Storage Account");
 
-                    INetworkSecurityGroup networkSecurityGroupmongo = _azureProd.NetworkSecurityGroups.Define($"{clusterName}-mongo2-nsg")
-                            .WithRegion(region)
-                            .WithExistingResourceGroup(resourceGroup)
-                            .DefineRule("ALLOW-SSH")
-                                .AllowInbound()
-                                .FromAnyAddress()
-                                .FromAnyPort()
-                                .ToAnyAddress()
-                                .ToPort(22)
-                                .WithProtocol(SecurityRuleProtocol.Tcp)
-                                .WithPriority(100)
-                                .WithDescription("Allow SSH")
-                                .Attach()
-                            .DefineRule("mongodb")
-                                .AllowInbound()
-                                .FromAnyAddress()
-                                .FromAnyPort()
-                                .ToAnyAddress()
-                                .ToPort(27017)
-                                .WithProtocol(SecurityRuleProtocol.Tcp)
-                                .WithPriority(101)
-                                .WithDescription("mongodb")
-                                .Attach()
-                            .WithTag("_contact_person", contactPerson)
-                            .Create();
+                    INetworkSecurityGroup networkSecurityGroupInsight = _azureProd.NetworkSecurityGroups.Define($"{clusterName}-insight-nsg")
+                        .WithRegion(region)
+                        .WithExistingResourceGroup(resourceGroup)
+                        .DefineRule("ALLOW-SSH")
+                            .AllowInbound()
+                            .FromAnyAddress()
+                            .FromAnyPort()
+                            .ToAnyAddress()
+                            .ToPort(22)
+                            .WithProtocol(SecurityRuleProtocol.Tcp)
+                            .WithPriority(100)
+                            .WithDescription("Allow SSH")
+                            .Attach()
+                        .WithTag("_contact_person", contactPerson)
+                        .Create();
 
-                    log.LogInformation($"{Utils.DateAndTime()} | Created | MongoDB Network Security Group");
+                    log.LogInformation($"{Utils.DateAndTime()} | Created | Insight Network Security Group");
 
-                    INetworkInterface networkInterfacemongo = _azureProd.NetworkInterfaces.Define($"{clusterName}-mongo2-nic")
+                    #region Create VM IP
+                    IPublicIPAddress publicIpAddress = _azureProd.PublicIPAddresses.Define($"{clusterName}-insight-ip")
+                       .WithRegion(region)
+                       .WithExistingResourceGroup(resourceGroupName)
+                       .WithDynamicIP()
+                       .WithLeafDomainLabel($"{clusterName}-insight-ip")
+                       .WithTag("_contact_person", contactPerson)
+                       .Create();
+
+                    log.LogInformation($"{Utils.DateAndTime()} | Created | VM IP Address");
+                    #endregion
+
+                    INetworkInterface networkInterfaceInsight = _azureProd.NetworkInterfaces.Define($"{clusterName}-insight-nic")
                         .WithRegion(region)
                         .WithExistingResourceGroup(resourceGroup)
                         .WithExistingPrimaryNetwork(virtualNetwork)
                         .WithSubnet(subnet)
                         .WithPrimaryPrivateIPAddressDynamic()
-                        .WithExistingNetworkSecurityGroup(networkSecurityGroupmongo)
+                        .WithExistingNetworkSecurityGroup(networkSecurityGroupInsight)
                         .WithTag("_contact_person", contactPerson)
                         .Create();
 
-                    log.LogInformation($"{Utils.DateAndTime()} | Created | MongoDB Network Interface");
+                    log.LogInformation($"{Utils.DateAndTime()} | Created | Insight Network Interface");
 
-                    IVirtualMachine createVmmongo = _azureProd.VirtualMachines.Define($"{clusterName}-mongo2")
+                    IVirtualMachine createVmInsight = _azureProd.VirtualMachines.Define($"{clusterName}-insight")
                         .WithRegion(region)
                         .WithExistingResourceGroup(resourceGroup)
-                        .WithExistingPrimaryNetworkInterface(networkInterfacemongo)
-                        .WithStoredLinuxImage(MongoVhdURL)
+                        .WithExistingPrimaryNetworkInterface(networkInterfaceInsight)
+                        .WithStoredLinuxImage(MysqlVhdURL)
                         .WithRootUsername(username)
                         .WithRootPassword(password)
-                        .WithComputerName("mongo")
+                        .WithComputerName("insight")
                         .WithBootDiagnostics(storageAccount)
                         .WithSize(VirtualMachineSizeTypes.StandardD2V2)
                         .WithTag("_contact_person", contactPerson)
                         .Create();
 
-                    log.LogInformation($"{Utils.DateAndTime()} | Created | MongoDB Virtual Machine");
-                    #endregion
+                    log.LogInformation($"{Utils.DateAndTime()} | Created | Insight Virtual Machine");
 
+                    #endregion
                 }
                 catch (Exception e)
                 {
@@ -160,6 +164,9 @@ namespace ProvisionOpenEdXPlatform
                 log.LogInformation($"{Utils.DateAndTime()} | Done");
                 return new OkObjectResult(true);
             }
+
         }
+
+
     }
 }
